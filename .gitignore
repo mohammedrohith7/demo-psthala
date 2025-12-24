@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv
+.terraform/
+*.tfstate
+*.tfstate.backup
+.pytest_cache/
+coverage.xml
+.coverage
+htmlcov/

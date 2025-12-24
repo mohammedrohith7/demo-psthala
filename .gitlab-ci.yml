@@ -1,0 +1,107 @@
+image: python:3.11-slim
+
+stages:
+  - test
+  - build
+  - provision
+  - seed
+  - security_scan
+
+variables:
+  TF_ROOT: infra
+  TF_ADDRESS: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${CI_ENVIRONMENT_NAME}
+  DOCKER_DRIVER: overlay2
+
+cache:
+  paths:
+    - .pip/
+    - venv/
+
+before_script:
+  - pip install --upgrade pip
+  - pip install virtualenv
+  - virtualenv venv
+  - source venv/bin/activate
+
+test_unit:
+  stage: test
+  script:
+    - pip install -r requirements.txt
+    - pytest tests/ --junitxml=report.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+
+build_image:
+  stage: build
+  image: docker:stable
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - |
+      if [ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]; then
+        docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
+        docker push $CI_REGISTRY_IMAGE:latest
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+.terraform_template:
+  image: hashicorp/terraform:light
+  before_script:
+    - cd $TF_ROOT
+    - terraform init \
+        -backend-config="address=${TF_ADDRESS}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=DELETE" \
+        -backend-config="username=${GITLAB_USER_LOGIN}" \
+        -backend-config="password=${CI_JOB_TOKEN}" \
+        -backend-config="retry_wait_min=5"
+
+provision_dev:
+  extends: .terraform_template
+  stage: provision
+  script:
+    - terraform validate
+    - terraform apply -auto-approve -var="environment=dev"
+  environment:
+    name: development
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+provision_uat:
+  extends: .terraform_template
+  stage: provision
+  script:
+    - terraform apply -auto-approve -var="environment=uat"
+  environment:
+    name: uat
+  when: manual
+
+seed_uat:
+  stage: seed
+  needs: ["provision_uat"]
+  script:
+    - pip install -r requirements.txt
+    - python src/scripts/seed_uat_data.py
+  environment:
+    name: uat
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+ai_security_scan:
+  stage: security_scan
+  script:
+    - echo "Running AI Red Teaming tools..."
+    # Placeholder for invoking 3rd party AI attack tools
+    - echo "Connecting to AI Attack Team dashboard..."
+    - echo "Scanning endpoint: https://api-uat.contoso.com"
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
